@@ -2,7 +2,7 @@
 
 全栈应用：输入股票代码，AI分析股票数据，存储至Supabase
 
-## � Online Demo URL
+## 🌐 Online Demo URL
 
 **访问地址**: https://stock-analyzer-xxxx.onrender.com
 
@@ -11,7 +11,7 @@
 ## 🚀 功能特性
 
 1. **数据获取**: 使用 Alpha Vantage 免费API获取实时股票行情
-2. **AI分析**: 调用 OpenAI GPT-4o-mini 分析股票，返回结构化JSON
+2. **AI分析**: 调用智谱AI (glm-4-flash) 分析股票，返回结构化JSON
 3. **数据存储**: 分析结果自动存入Supabase数据库
 4. **历史记录**: 查看历史分析记录
 
@@ -21,7 +21,7 @@
 |------|------|
 | 前端 | React + Vite |
 | 后端 | Express.js |
-| AI | OpenAI GPT-4o-mini |
+| AI | 智谱AI glm-4-flash |
 | 数据库 | Supabase |
 | 部署 | Render.com |
 
@@ -41,7 +41,7 @@ stock-analyzer/
 │   ├── index.js            # 主服务
 │   ├── supabase/
 │   │   └── schema.sql      # 数据库Schema
-│   ├── render.yaml         # Render部署配置
+│   ├── render.yaml          # Render部署配置
 │   ├── .env.example
 │   └── package.json
 └── package.json            # Workspace根配置
@@ -54,7 +54,7 @@ stock-analyzer/
 - GitHub账号
 - Render.com账号 (免费)
 - Supabase账号 (免费)
-- OpenAI API Key
+- 智谱AI API Key (免费注册: https://www.zhipuai.cn/)
 
 ### 2. 配置Supabase
 
@@ -69,16 +69,16 @@ stock-analyzer/
 
 ```env
 PORT=3001
-OPENAI_API_KEY=sk-xxxx
+ZHIPU_API_KEY=你的智谱AI密钥
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_ANON_KEY=eyJhbGc...
-STOCK_API_KEY=demo  # Alpha Vantage免费API Key
+STOCK_API_KEY=demo
 ```
 
 ### 4. 部署到Render.com
 
 #### 后端部署
-1. Fork本仓库到GitHub
+1. 确保代码已推送到GitHub
 2. 登录 [Render.com](https://render.com)
 3. 点击 "New +" → "Web Service"
 4. 连接GitHub仓库
@@ -86,7 +86,7 @@ STOCK_API_KEY=demo  # Alpha Vantage免费API Key
    - **Root Directory**: `server`
    - **Build Command**: `npm install`
    - **Start Command**: `npm start`
-6. 添加环境变量 (从.env)
+6. 添加环境变量
 
 #### 前端部署
 1. 在Render中创建 "Static Site"
@@ -96,7 +96,7 @@ STOCK_API_KEY=demo  # Alpha Vantage免费API Key
    - **Build Command**: `npm install && npm run build`
    - **Publish Directory**: `dist`
 4. 设置环境变量:
-   - `VITE_API_URL`: 您的后端URL (如 https://stock-api-xxxx.onrender.com)
+   - `VITE_API_URL`: 您的后端URL
 
 ## 💡 Prompt工程: 强制LLM输出纯JSON
 
@@ -105,50 +105,70 @@ STOCK_API_KEY=demo  # Alpha Vantage免费API Key
 这是让LLM只吐JSON不乱说话的核心Prompt技巧:
 
 ```javascript
-const prompt = `You are a professional stock analyst. Analyze the following stock data and return ONLY valid JSON with no additional text.
+async function analyzeWithLLM(stockData) {
+  const prompt = `你是一位专业的股票分析师。请分析以下股票数据，只返回JSON格式，不要任何其他文字。
 
-Required JSON format:
+必须严格遵循以下JSON格式：
 {
-  "summary": "A 2-3 sentence summary of the stock analysis",
-  "sentiment": "Bullish" or "Neutral" or "Bearish",
-  "riskLevel": "Low" or "Medium" or "High"
+  "summary": "2-3句话的股票分析总结",
+  "sentiment": "Bullish或Neutral或Bearish之一",
+  "riskLevel": "Low或Medium或High之一"
 }
 
-Stock Data:
+股票数据：
 ${JSON.stringify(stockData, null, 2)}
 
-IMPORTANT: Return ONLY the JSON object, no markdown formatting, no code blocks, no explanations. Start with { and end with }.`;
+重要：只返回JSON对象，不要markdown代码块，不要解释，直接以{开头以}结尾。`;
 
-// 系统提示词强化JSON约束
-const completion = await openai.chat.completions.create({
-  model: "gpt-4o-mini",
-  messages: [
-    {
-      role: "system",
-      content: "You are a JSON-only stock analyst. Always respond with valid JSON in the exact format requested. Never add any text outside the JSON."
+  const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ZHIPU_API_KEY}`
     },
-    {
-      role: "user",
-      content: prompt
+    body: JSON.stringify({
+      model: 'glm-4-flash',
+      messages: [
+        {
+          role: 'system',
+          content: '你是一个只返回JSON的股票分析师。严格遵循用户要求的JSON格式，不要返回任何JSON之外的文字。'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 500
+    })
+  });
+
+  const result = await response.json();
+  const responseText = result.choices[0].message.content.trim();
+
+  // 后处理：清理markdown格式
+  let jsonStr = responseText;
+  if (jsonStr.startsWith('```json')) {
+    jsonStr = jsonStr.slice(7);
+  } else if (jsonStr.startsWith('```')) {
+    jsonStr = jsonStr.slice(3);
+  }
+  if (jsonStr.endsWith('```')) {
+    jsonStr = jsonStr.slice(0, -3);
+  }
+  jsonStr = jsonStr.trim();
+
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    // 容错：正则提取JSON
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
     }
-  ],
-  temperature: 0.3,  // 低温度减少随机性
-  max_tokens: 500
-});
-
-// 后处理: 清理可能的markdown格式
-let jsonStr = responseText.trim();
-if (jsonStr.startsWith('```json')) {
-  jsonStr = jsonStr.slice(7);
-} else if (jsonStr.startsWith('```')) {
-  jsonStr = jsonStr.slice(3);
+    throw new Error('Failed to parse LLM response as JSON');
+  }
 }
-if (jsonStr.endsWith('```')) {
-  jsonStr = jsonStr.slice(0, -3);
-}
-jsonStr = jsonStr.trim();
-
-return JSON.parse(jsonStr);
 ```
 
 ### Prompt设计要点
@@ -156,12 +176,13 @@ return JSON.parse(jsonStr);
 | 技巧 | 说明 |
 |------|------|
 | 明确格式 | 详细说明JSON字段要求和枚举值 |
-| 强调约束 | "Return ONLY the JSON object" |
+| 强调约束 | "只返回JSON对象，不要markdown代码块" |
+| 系统提示词 | 强化JSON-only约束 |
 | 低温度 | temperature=0.3减少随机输出 |
 | 后处理 | strip markdown code blocks |
 | 容错解析 | 正则提取JSON防止解析失败 |
 
-## 🐛 Debug记录: 解决CORS问题
+## 🐛 Debug记录: CORS问题排查
 
 ### 问题描述
 部署到Render.com后，前端调用API时出现:
@@ -206,7 +227,7 @@ CORS错误消除，API调用成功。
 ## 🔒 安全注意
 
 生产环境中请:
-- 不要在前端暴露OpenAI API Key
+- 不要在前端暴露API Key
 - 使用后端代理调用AI服务
 - 配置Supabase Row Level Security
 - 使用环境变量存储敏感信息
