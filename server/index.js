@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
@@ -12,23 +11,20 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
 const STOCK_API_KEY = process.env.STOCK_API_KEY || 'demo';
+const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY;
 
 async function fetchStockData(symbol) {
   const response = await fetch(
     `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${STOCK_API_KEY}`
   );
   const data = await response.json();
-  
+
   if (data['Global Quote']) {
     return {
       symbol: data['Global Quote']['01. symbol'],
@@ -41,12 +37,12 @@ async function fetchStockData(symbol) {
       latestTradingDay: data['Global Quote']['07. latest trading day']
     };
   }
-  
+
   const fundamentalResponse = await fetch(
     `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${STOCK_API_KEY}`
   );
   const fundamentalData = await fundamentalResponse.json();
-  
+
   if (fundamentalData.Symbol) {
     return {
       symbol: fundamentalData.Symbol,
@@ -58,43 +54,51 @@ async function fetchStockData(symbol) {
       name: fundamentalData.Name
     };
   }
-  
+
   throw new Error('Stock data not found');
 }
 
 async function analyzeWithLLM(stockData) {
-  const prompt = `You are a professional stock analyst. Analyze the following stock data and return ONLY valid JSON with no additional text.
+  const prompt = `你是一位专业的股票分析师。请分析以下股票数据，只返回JSON格式，不要任何其他文字。
 
-Required JSON format:
+必须严格遵循以下JSON格式：
 {
-  "summary": "A 2-3 sentence summary of the stock analysis",
-  "sentiment": "Bullish" or "Neutral" or "Bearish",
-  "riskLevel": "Low" or "Medium" or "High"
+  "summary": "2-3句话的股票分析总结",
+  "sentiment": "Bullish或Neutral或Bearish之一",
+  "riskLevel": "Low或Medium或High之一"
 }
 
-Stock Data:
+股票数据：
 ${JSON.stringify(stockData, null, 2)}
 
-IMPORTANT: Return ONLY the JSON object, no markdown formatting, no code blocks, no explanations. Start with { and end with }.`;
+重要：只返回JSON对象，不要markdown代码块，不要解释，直接以{开头以}结尾。`;
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content: "You are a JSON-only stock analyst. Always respond with valid JSON in the exact format requested. Never add any text outside the JSON."
-      },
-      {
-        role: "user",
-        content: prompt
-      }
-    ],
-    temperature: 0.3,
-    max_tokens: 500
+  const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ZHIPU_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'glm-4-flash',
+      messages: [
+        {
+          role: 'system',
+          content: '你是一个只返回JSON的股票分析师。严格遵循用户要求的JSON格式，不要返回任何JSON之外的文字。'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 500
+    })
   });
 
-  const responseText = completion.choices[0].message.content.trim();
-  
+  const result = await response.json();
+  const responseText = result.choices[0].message.content.trim();
+
   let jsonStr = responseText;
   if (jsonStr.startsWith('```json')) {
     jsonStr = jsonStr.slice(7);
@@ -105,7 +109,7 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no code blocks, 
     jsonStr = jsonStr.slice(0, -3);
   }
   jsonStr = jsonStr.trim();
-  
+
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
@@ -141,7 +145,7 @@ async function saveAnalysis(symbol, stockData, analysis) {
 app.post('/api/analyze', async (req, res) => {
   try {
     const { symbol } = req.body;
-    
+
     if (!symbol) {
       return res.status(400).json({ error: 'Stock symbol is required' });
     }
@@ -158,7 +162,7 @@ app.post('/api/analyze', async (req, res) => {
     });
   } catch (error) {
     console.error('Analysis error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message || 'Failed to analyze stock',
       details: error.response?.data || null
     });
@@ -168,19 +172,19 @@ app.post('/api/analyze', async (req, res) => {
 app.get('/api/history', async (req, res) => {
   try {
     const { symbol } = req.query;
-    
+
     let query = supabase
       .from('stock_analyses')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(20);
-    
+
     if (symbol) {
       query = query.eq('symbol', symbol.toUpperCase());
     }
-    
+
     const { data, error } = await query;
-    
+
     if (error) throw error;
     res.json(data);
   } catch (error) {
